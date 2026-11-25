@@ -302,6 +302,29 @@ def product(root: Path | None = None) -> list[dict]:
         path = root / rel
         ok = path.is_file()
         results.append(check(rel, ok, "present" if ok else "missing"))
+    results.extend(empryo_profile(root))
+    return results
+
+
+def empryo_profile(root: Path) -> list[dict]:
+    path = root / "empryo/poteto.md"
+    if not path.is_file():
+        return [check("empryo/poteto.md", False, "missing")]
+    results = [check("empryo/poteto.md", True, "present")]
+    fields = frontmatter_fields(path.read_text(encoding="utf-8")) or {}
+    name = (fields.get("name") or "").strip()
+    desc = (fields.get("description") or "").strip()
+    missing = [k for k, v in (("name", name), ("description", desc)) if not v]
+    results.append(
+        check("empryo_poteto_frontmatter", not missing, "name + description" if not missing else f"missing {', '.join(missing)}")
+    )
+    skills = re.findall(r"[A-Za-z0-9][\w-]*", fields.get("skills") or "")
+    listed = "ps-poteto-mode" in skills
+    exists = (root / "skills/ps-poteto-mode/SKILL.md").is_file()
+    detail = "ps-poteto-mode listed and present" if listed and exists else (
+        "skills list lacks ps-poteto-mode" if not listed else "skills/ps-poteto-mode/SKILL.md missing"
+    )
+    results.append(check("empryo_poteto_skills", listed and exists, detail))
     return results
 
 

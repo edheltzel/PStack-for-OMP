@@ -8,13 +8,18 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  lstatSync,
   readFileSync,
+  realpathSync,
+  rmdirSync,
   rmSync,
   statSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const UPSTREAM_REPO = "https://github.com/cursor/plugins.git";
@@ -29,14 +34,18 @@ const HELP = `Usage: pstack <command> [options]
 Commands:
   sync    Pull official skills from cursor/plugins into skills/ps-*
   bump    Bump package.json + Claude plugin version (omp/pi share package.json)
+  empryo  Install pstack into Empryo: skill links, translated agents, poteto profile
 
-pstack sync [--dry-run] [--force] [--from DIR] [--repo URL] [--ref REF] [--root DIR]
+pstack sync [--dry-run] [--force] [--no-empryo] [--from DIR] [--repo URL] [--ref REF] [--root DIR]
 
 pstack bump <patch|minor|major> [--dry-run] [--root DIR]
 pstack bump --tag [--release] [--dry-run] [--root DIR]
 
+pstack empryo <install|check|remove> [--dry-run] [--root DIR]
+
 SoT is github.com/cursor/plugins (pstack/skills), not backnotprop/pstack or skills.sh.
-Writes into the existing skills/ps-* tree. Does not install into agent skill dirs.
+Writes into the existing skills/ps-* tree. Touches Empryo links only when ~/.empryo/pstack.json exists (--no-empryo skips).
+empryo links skills/ps-* into ~/.agents/skills, writes agents + poteto into ~/.empryo/agents/pstack, and owns only paths in ~/.empryo/pstack.json. check exits 1 on missing or drift.
 bump writes package.json and .claude-plugin/plugin.json. omp and pi use package.json.
 Commit those files, then --tag on that HEAD (git tag vX.Y.Z <sha>). --release pushes the tag and gh release create --target <sha>.
 `;
@@ -59,6 +68,8 @@ export function parseArgs(argv) {
     kind: null,
     tag: false,
     release: false,
+    noEmpryo: false,
+    action: null,
   };
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
@@ -71,6 +82,8 @@ export function parseArgs(argv) {
     else if (a === "--root") opts.root = args[++i];
     else if (a === "--tag") opts.tag = true;
     else if (a === "--release") opts.release = true;
+    else if (a === "--no-empryo") opts.noEmpryo = true;
+    else if (command === "empryo" && EMPRYO_MODES.includes(a) && opts.action == null) opts.action = a;
     else if (command === "bump" && BUMP_KINDS.includes(a) && opts.kind == null) opts.kind = a;
     else throw new Error(`unknown option: ${a}`);
   }
@@ -291,12 +304,14 @@ export function formatReport(info) {
     "",
     `${plural(info.plan.slugs.length, "skill")}: ${added.length} added, ${updated.length} updated, ${diverged.length} kept local, ${skipped.length} skipped, ${info.plan.unchanged} unchanged`,
   );
+  if (info.empryo) lines.push("", formatEmpryo(info.empryo));
   return lines.join("\n");
 }
 
 export function runSync(opts) {
   const root = resolve(opts.root);
   const destSkills = join(root, "skills");
+  const home = resolve(opts.home ?? defaultHome());
   let tmp = null;
   let fetched = {
     skillsDir: "",
@@ -319,16 +334,340 @@ export function runSync(opts) {
       force: opts.force,
     });
     if (!opts.dryRun) applyPlan(root, plan);
-    return {
+    const info = {
       repo: fetched.repo,
       sha: fetched.sha,
       version: fetched.version,
       dryRun: Boolean(opts.dryRun),
       plan,
     };
+    if (!opts.noEmpryo && existsSync(join(home, EMPRYO_MANIFEST))) {
+      const extraSkills = [
+        ...new Set(plan.actions.filter((a) => a.kind === "add").map((a) => a.destRel.split("/")[1])),
+      ];
+      info.empryo = runEmpryo({ root, home, mode: "reconcile", dryRun: opts.dryRun, extraSkills });
+    }
+    return info;
   } finally {
     if (tmp) rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+export const EMPRYO_MANIFEST = ".empryo/pstack.json";
+export const EMPRYO_AGENTS = ".empryo/agents/pstack";
+export const EMPRYO_SKILLS = ".agents/skills";
+export const EMPRYO_ALT_SKILLS = ".empryo/skills";
+export const EMPRYO_MODES = Object.freeze(["install", "check", "remove"]);
+const EMPRYO_PLAN_MODES = Object.freeze([...EMPRYO_MODES, "reconcile"]);
+const EMPRYO_CHANGES = new Set(["link", "relink", "write", "update", "unlink", "delete", "forget"]);
+
+function defaultHome() {
+  return process.env.HOME || homedir();
+}
+
+function unquote(value) {
+  return value.trim().replace(/^["']|["']$/g, "");
+}
+
+export function toEmpryoAgent(text) {
+  const m = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text);
+  if (!m) return text;
+  const lines = m[1].split("\n");
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const kv = /^([\w-]+):\s*(.*)$/.exec(lines[i]);
+    if (!kv) {
+      out.push(lines[i]);
+      continue;
+    }
+    const key = kv[1];
+    const value = unquote(kv[2]);
+    if (key === "model") {
+      if (value === "@smol") out.push("model: fast");
+      else if (!value.startsWith("@")) out.push(lines[i]);
+    } else if (key === "thinking-level") {
+      out.push(`effort: ${value}`);
+    } else if (key === "autoload-skills") {
+      const names = value.startsWith("[")
+        ? value.slice(1, -1).split(",").map(unquote).filter(Boolean)
+        : value
+          ? [value]
+          : [];
+      while (i + 1 < lines.length && /^\s+-\s*\S/.test(lines[i + 1])) {
+        i += 1;
+        names.push(unquote(lines[i].replace(/^\s+-\s*/, "")));
+      }
+      out.push("skills:", ...names.map((name) => `  - ${name.startsWith("ps-") ? name : `ps-${name}`}`));
+    } else {
+      out.push(lines[i]);
+    }
+  }
+  return `---\n${out.join("\n")}\n---\n${text.slice(m[0].length)}`;
+}
+
+export function detectEmpryo(home, env = process.env) {
+  const onPath = (env.PATH || "").split(delimiter).some((dir) => dir && existsSync(join(dir, "empryo")));
+  return onPath || existsSync("/Applications/Empryo.app") || existsSync(join(home, ".empryo", "config.json"));
+}
+
+function lexists(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isLink(path) {
+  return lexists(path) && lstatSync(path).isSymbolicLink();
+}
+
+function isFile(path) {
+  return lexists(path) && lstatSync(path).isFile();
+}
+
+function realOrSelf(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+function pointsAt(path, target) {
+  if (!lexists(path)) return false;
+  try {
+    return realpathSync(path) === realOrSelf(target);
+  } catch {
+    return false;
+  }
+}
+
+function manifestText(manifest) {
+  return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
+function readManifest(home) {
+  const path = join(home, EMPRYO_MANIFEST);
+  if (!existsSync(path)) return null;
+  const text = readFileSync(path, "utf8");
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`invalid JSON: ${path}`);
+  }
+  return {
+    text,
+    root: typeof json.root === "string" ? json.root : null,
+    links: Array.isArray(json.links) ? json.links : [],
+    files: Array.isArray(json.files) ? json.files : [],
+  };
+}
+
+function empryoFiles(root) {
+  const out = new Map();
+  const agentsDir = join(root, "agents");
+  if (existsSync(agentsDir)) {
+    for (const name of readdirSync(agentsDir).filter((n) => n.endsWith(".md")).sort()) {
+      out.set(`${EMPRYO_AGENTS}/${name}`, toEmpryoAgent(readFileSync(join(agentsDir, name), "utf8")));
+    }
+  }
+  const poteto = join(root, "empryo", "poteto.md");
+  if (existsSync(poteto)) out.set(`${EMPRYO_AGENTS}/poteto.md`, readFileSync(poteto, "utf8"));
+  return out;
+}
+
+function releaseOwned(home, owned, wantLinks, wantFiles, actions) {
+  for (const rel of [...owned.links].sort()) {
+    if (wantLinks.has(rel)) continue;
+    const abs = join(home, rel);
+    if (isLink(abs)) actions.push({ kind: "unlink", path: rel });
+    else if (!lexists(abs)) actions.push({ kind: "forget", path: rel });
+    else actions.push({ kind: "foreign", path: rel });
+  }
+  for (const rel of [...owned.files].sort()) {
+    if (wantFiles.has(rel)) continue;
+    const abs = join(home, rel);
+    if (isFile(abs)) actions.push({ kind: "delete", path: rel });
+    else if (!lexists(abs)) actions.push({ kind: "forget", path: rel });
+    else actions.push({ kind: "foreign", path: rel });
+  }
+}
+
+export function planEmpryo(args) {
+  const root = resolve(args.root);
+  const home = resolve(args.home ?? defaultHome());
+  const mode = args.mode;
+  if (!EMPRYO_PLAN_MODES.includes(mode)) throw new Error(`empryo mode must be one of: ${EMPRYO_MODES.join(", ")}`);
+  const detect = args.detect ?? detectEmpryo;
+  const plan = { mode, root, home, detected: true, skipped: null, actions: [], manifest: null, manifestChanged: false, ok: true };
+  if (mode === "install" && !detect(home)) {
+    return {
+      ...plan,
+      detected: false,
+      skipped: "Empryo not detected (no empryo on PATH, /Applications/Empryo.app or ~/.empryo/config.json); skipped",
+    };
+  }
+  const current = readManifest(home);
+  if (mode === "reconcile") {
+    if (!current) return { ...plan, skipped: `no ~/${EMPRYO_MANIFEST}; skipped` };
+    if (current.root && realOrSelf(current.root) !== realOrSelf(root)) {
+      return { ...plan, skipped: `installed from ${current.root}; skipped` };
+    }
+  }
+  const owned = { links: new Set(current?.links ?? []), files: new Set(current?.files ?? []) };
+  const actions = plan.actions;
+  if (mode === "remove") {
+    releaseOwned(home, owned, new Set(), new Set(), actions);
+    return { ...plan, manifestChanged: Boolean(current), ok: !actions.some((a) => EMPRYO_CHANGES.has(a.kind)) };
+  }
+
+  const keepLinks = [];
+  const keepFiles = [];
+  const slugs = [
+    ...new Set([
+      ...listSkillSlugs(join(root, "skills")).filter((name) => name.startsWith("ps-")),
+      ...(args.extraSkills ?? []),
+    ]),
+  ].sort();
+  const wantLinks = new Set();
+  for (const slug of slugs) {
+    const rel = `${EMPRYO_SKILLS}/${slug}`;
+    const alt = `${EMPRYO_ALT_SKILLS}/${slug}`;
+    const abs = join(home, rel);
+    const target = join(root, "skills", slug);
+    const mine = owned.links.has(rel);
+    wantLinks.add(rel);
+    if (pointsAt(abs, target)) {
+      actions.push({ kind: mine ? "keep" : "reuse", path: rel, target });
+      if (mine) keepLinks.push(rel);
+    } else if (!lexists(abs) && pointsAt(join(home, alt), target)) {
+      actions.push({ kind: "reuse", path: alt, target });
+    } else if (!lexists(abs)) {
+      actions.push({ kind: "link", path: rel, target });
+      keepLinks.push(rel);
+    } else if (mine && isLink(abs)) {
+      actions.push({ kind: "relink", path: rel, target });
+      keepLinks.push(rel);
+    } else {
+      actions.push({ kind: "foreign", path: rel });
+    }
+  }
+
+  const want = empryoFiles(root);
+  for (const [rel, content] of want) {
+    const abs = join(home, rel);
+    const mine = owned.files.has(rel);
+    if (!lexists(abs)) {
+      actions.push({ kind: "write", path: rel, content });
+      keepFiles.push(rel);
+    } else if (!mine || !isFile(abs)) {
+      actions.push({ kind: "foreign", path: rel });
+    } else if (readFileSync(abs, "utf8") === content) {
+      actions.push({ kind: "keep", path: rel });
+      keepFiles.push(rel);
+    } else {
+      actions.push({ kind: "update", path: rel, content });
+      keepFiles.push(rel);
+    }
+  }
+  releaseOwned(home, owned, wantLinks, new Set(want.keys()), actions);
+
+  const manifest = { version: 1, root, links: keepLinks.sort(), files: keepFiles.sort() };
+  const manifestChanged = mode !== "check" && current?.text !== manifestText(manifest);
+  const blocked = mode === "check" && actions.some((a) => a.kind === "foreign");
+  return { ...plan, manifest, manifestChanged, ok: !blocked && !actions.some((a) => EMPRYO_CHANGES.has(a.kind)) };
+}
+
+export function applyEmpryo(root, home, plan) {
+  const done = [];
+  if (plan.skipped || plan.mode === "check") return done;
+  const base = resolve(home);
+  for (const action of plan.actions) {
+    const abs = join(base, action.path);
+    if (action.kind === "link" || action.kind === "relink") {
+      if (action.kind === "relink") unlinkSync(abs);
+      mkdirSync(dirname(abs), { recursive: true });
+      symlinkSync(action.target, abs);
+    } else if (action.kind === "write" || action.kind === "update") {
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, action.content);
+    } else if (action.kind === "unlink" || action.kind === "delete") {
+      unlinkSync(abs);
+    } else {
+      continue;
+    }
+    done.push(action.path);
+  }
+  const manifestPath = join(base, EMPRYO_MANIFEST);
+  if (plan.mode === "remove") {
+    if (existsSync(manifestPath)) {
+      unlinkSync(manifestPath);
+      done.push(EMPRYO_MANIFEST);
+    }
+    const agentsDir = join(base, EMPRYO_AGENTS);
+    if (existsSync(agentsDir) && readdirSync(agentsDir).length === 0) rmdirSync(agentsDir);
+  } else if (plan.manifestChanged) {
+    mkdirSync(dirname(manifestPath), { recursive: true });
+    writeFileSync(manifestPath, manifestText(plan.manifest));
+    done.push(EMPRYO_MANIFEST);
+  }
+  return done;
+}
+
+export function runEmpryo(opts) {
+  const plan = planEmpryo({
+    root: opts.root,
+    home: opts.home,
+    mode: opts.mode,
+    detect: opts.detect,
+    extraSkills: opts.extraSkills,
+  });
+  if (!opts.dryRun) applyEmpryo(plan.root, plan.home, plan);
+  return { ...plan, dryRun: Boolean(opts.dryRun) };
+}
+
+export function formatEmpryo(result) {
+  if (result.skipped) return `Empryo ${result.mode}: ${result.skipped}`;
+  const of = (...kinds) => result.actions.filter((a) => kinds.includes(a.kind)).map((a) => a.path);
+  const lines = [
+    `Empryo ${result.mode}${result.dryRun ? " (dry run, nothing written)" : ""}`,
+    `  home  ${result.home}`,
+    `  root  ${result.root}`,
+  ];
+  const section = (title, items) => {
+    if (!items.length) return;
+    lines.push("", `${title.replace("{n}", String(items.length))}`);
+    for (const item of items) lines.push(`  ${item}`);
+  };
+  const check = result.mode === "check";
+  if (check) {
+    section("Missing ({n})", of("link", "write"));
+    section("Drift ({n})", of("relink", "update"));
+    section("Stale ({n}), owned but no longer shipped", of("unlink", "delete", "forget"));
+  } else {
+    section("Linked ({n})", of("link"));
+    section("Relinked ({n})", of("relink"));
+    section("Wrote ({n})", of("write"));
+    section("Updated ({n})", of("update"));
+    section("Unlinked ({n})", of("unlink"));
+    section("Deleted ({n})", of("delete"));
+    section("Forgot ({n}), already gone", of("forget"));
+  }
+  section("Reused ({n}), already linked to this checkout", of("reuse"));
+  section("Not ours, left alone ({n})", of("foreign"));
+  const changes = result.actions.filter((a) => EMPRYO_CHANGES.has(a.kind)).length;
+  const kept = of("keep").length;
+  if (check) {
+    lines.push("", result.ok ? `ok: ${kept} installed and current` : `${changes} missing or drifted, ${of("foreign").length} blocked by files pstack does not own; run pstack empryo install`);
+  } else if (!changes && !result.manifestChanged) {
+    lines.push("", `no changes (${kept} unchanged)`);
+  } else {
+    lines.push("", `${changes} changed, ${kept} unchanged${result.manifestChanged ? `, ~/${EMPRYO_MANIFEST} ${result.mode === "remove" ? "removed" : "written"}` : ""}`);
+  }
+  return lines.join("\n");
 }
 
 export function bumpSemver(version, kind) {
@@ -487,8 +826,12 @@ export function main(argv = process.argv.slice(2), io = process) {
     io.stdout.write(HELP);
     return opts.help ? 0 : 2;
   }
-  if (opts.command !== "sync" && opts.command !== "bump") {
+  if (opts.command !== "sync" && opts.command !== "bump" && opts.command !== "empryo") {
     io.stderr.write(`unknown command: ${opts.command}\n${HELP}`);
+    return 2;
+  }
+  if (opts.command === "empryo" && !opts.action) {
+    io.stderr.write(`empryo needs one of: ${EMPRYO_MODES.join(", ")}\n${HELP}`);
     return 2;
   }
   try {
@@ -497,6 +840,11 @@ export function main(argv = process.argv.slice(2), io = process) {
       const report = runBump({ ...opts, root });
       io.stdout.write(`${formatBump(report)}\n`);
       return 0;
+    }
+    if (opts.command === "empryo") {
+      const result = runEmpryo({ root, home: defaultHome(), mode: opts.action, dryRun: opts.dryRun });
+      io.stdout.write(`${formatEmpryo(result)}\n`);
+      return result.mode === "check" && !result.ok ? 1 : 0;
     }
     const report = runSync({ ...opts, root });
     io.stdout.write(`${formatReport(report)}\n`);

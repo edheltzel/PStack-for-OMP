@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,8 +25,13 @@ import {
   planSync,
   rewriteLayout,
   runBump,
+  runEmpryo,
   runSync,
 } from "../../scripts/pstack.mjs";
+
+function tempHome(): string {
+  return mkdtempSync(join(tmpdir(), "pstack-sync-home-"));
+}
 
 const cli = fileURLToPath(new URL("../../scripts/pstack.mjs", import.meta.url));
 
@@ -141,6 +156,7 @@ describe("pstack sync", () => {
       repo: UPSTREAM_REPO,
       ref: null,
       root,
+      home: tempHome(),
       help: false,
     });
     const added = readFileSync(join(root, "skills/ps-principle-attack-the-premise/SKILL.md"), "utf8");
@@ -169,6 +185,7 @@ describe("pstack sync", () => {
       repo: UPSTREAM_REPO,
       ref: null,
       root,
+      home: tempHome(),
       help: false,
     });
     expect(() => readFileSync(join(root, "skills/ps-why/SKILL.md"))).toThrow();
@@ -187,14 +204,114 @@ describe("pstack sync", () => {
 
   it("CLI sync --dry-run --from prints a plan and exits 0", () => {
     const { root, from } = fixture();
+    const home = tempHome();
     const result = spawnSync(process.execPath, [cli, "sync", "--dry-run", "--from", from, "--root", root], {
       encoding: "utf8",
+      env: { ...process.env, HOME: home, EMPRYO_HOME: join(home, ".empryo") },
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("dry run, nothing written");
     expect(result.stdout).toContain("  skills/ps-why/SKILL.md");
     expect(result.stdout).toContain("cursor/plugins");
     expect(() => readFileSync(join(root, "skills/ps-why/SKILL.md"))).toThrow();
+  });
+});
+
+function snapshot(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!existsSync(dir)) return out;
+  const walk = (rel: string) => {
+    const full = rel ? join(dir, rel) : dir;
+    for (const name of readdirSync(full).sort()) {
+      const child = rel ? `${rel}/${name}` : name;
+      const st = lstatSync(join(dir, child));
+      if (st.isSymbolicLink()) out[child] = `-> ${readlinkSync(join(dir, child))}`;
+      else if (st.isDirectory()) {
+        out[`${child}/`] = "dir";
+        walk(child);
+      } else out[child] = readFileSync(join(dir, child), "utf8");
+    }
+  };
+  walk("");
+  return out;
+}
+
+function syncOpts(root: string, from: string, home: string, extra: Record<string, unknown> = {}) {
+  return {
+    command: "sync",
+    dryRun: false,
+    force: false,
+    from,
+    repo: UPSTREAM_REPO,
+    ref: null,
+    root,
+    home,
+    help: false,
+    ...extra,
+  };
+}
+
+function installedFixture(): { root: string; from: string; home: string } {
+  const { root, from } = fixture();
+  const home = tempHome();
+  write(root, "skills/ps-local-only/SKILL.md", "---\nname: ps-local-only\ndescription: Local.\n---\n");
+  write(root, "agents/helper.md", '---\nname: helper\ndescription: Helps.\nmodel: "@smol"\n---\n\nHelp.\n');
+  write(root, "empryo/poteto.md", "---\nname: poteto\ndescription: Poteto.\nskills:\n  - ps-poteto-mode\n---\n\nOn.\n");
+  runEmpryo({ root, home, mode: "install", dryRun: false, detect: () => true });
+  return { root, from, home };
+}
+
+describe("pstack sync reconciles Empryo", () => {
+  it("links new skills, unlinks gone ones and refreshes agents when the manifest exists", () => {
+    const { root, from, home } = installedFixture();
+    expect(existsSync(join(home, ".agents/skills/ps-why"))).toBe(false);
+    rmSync(join(root, "skills/ps-local-only"), { recursive: true });
+    write(root, "agents/helper.md", '---\nname: helper\ndescription: Helps more.\nthinking-level: low\n---\n\nHelp.\n');
+    const report = runSync(syncOpts(root, from, home));
+    expect(readlinkSync(join(home, ".agents/skills/ps-why"))).toBe(join(root, "skills/ps-why"));
+    expect(existsSync(join(home, ".agents/skills/ps-local-only"))).toBe(false);
+    expect(() => lstatSync(join(home, ".agents/skills/ps-local-only"))).toThrow();
+    expect(readFileSync(join(home, ".empryo/agents/pstack/helper.md"), "utf8")).toBe(
+      "---\nname: helper\ndescription: Helps more.\neffort: low\n---\n\nHelp.\n",
+    );
+    const manifest = JSON.parse(readFileSync(join(home, ".empryo/pstack.json"), "utf8"));
+    expect(manifest.links).toContain(".agents/skills/ps-why");
+    expect(manifest.links).not.toContain(".agents/skills/ps-local-only");
+    const text = formatReport(report);
+    expect(text).toMatch(/^Empryo reconcile/m);
+    expect(text).toContain("  .agents/skills/ps-why");
+    expect(text).toMatch(/Unlinked \(1\)\n {2}\.agents\/skills\/ps-local-only/);
+    expect(text).toMatch(/Updated \(1\)\n {2}\.empryo\/agents\/pstack\/helper\.md/);
+  });
+
+  it("dry run writes nothing under root or home but plans the links", () => {
+    const { root, from, home } = installedFixture();
+    const rootBefore = snapshot(root);
+    const homeBefore = snapshot(home);
+    const report = runSync(syncOpts(root, from, home, { dryRun: true }));
+    expect(snapshot(root)).toEqual(rootBefore);
+    expect(snapshot(home)).toEqual(homeBefore);
+    expect(formatReport(report)).toMatch(/Linked \(\d+\)\n( {2}.*\n)* {2}\.agents\/skills\/ps-why/);
+  });
+
+  it("leaves home alone without a manifest", () => {
+    const { root, from } = fixture();
+    const home = tempHome();
+    write(home, ".agents/skills/mine/SKILL.md", "mine\n");
+    const before = snapshot(home);
+    const report = runSync(syncOpts(root, from, home));
+    expect(snapshot(home)).toEqual(before);
+    expect(report.empryo).toBeUndefined();
+    expect(formatReport(report)).not.toContain("Empryo");
+  });
+
+  it("--no-empryo skips reconcile even with a manifest", () => {
+    const { root, from, home } = installedFixture();
+    const before = snapshot(home);
+    const report = runSync(syncOpts(root, from, home, { noEmpryo: true }));
+    expect(snapshot(home)).toEqual(before);
+    expect(formatReport(report)).not.toContain("Empryo");
+    expect(parseArgs(["sync", "--no-empryo"]).noEmpryo).toBe(true);
   });
 });
 

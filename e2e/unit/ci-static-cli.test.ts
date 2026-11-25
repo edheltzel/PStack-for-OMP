@@ -79,5 +79,17 @@ describe("ci_static.py CLI fixtures", () => {
     expect(summary.failed).toContain("docs/guide/README.md");
     expect(summary.failed).toContain("automations/benny/FOR_AGENTS.md");
     expect(summary.failed).toContain("skills/ps-swarm/SKILL.md");
+    expect(summary.failed).toContain("empryo/poteto.md");
+  });
+
+  it("fails product when the Empryo poteto profile lacks fields or its skill", () => {
+    const root = fixture({
+      "empryo/poteto.md": "---\nname: poteto\nskills:\n  - ps-other\n---\n\nOn.\n",
+    });
+    const { status, summary } = runCiStatic(["--product"], root);
+    expect(status).toBe(1);
+    expect(summary.failed).toContain("empryo_poteto_frontmatter");
+    expect(summary.failed).toContain("empryo_poteto_skills");
+    expect(summary.failed).not.toContain("empryo/poteto.md");
   });
 });

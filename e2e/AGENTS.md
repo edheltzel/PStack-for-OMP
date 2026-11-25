@@ -7,8 +7,8 @@ Prove the plugin without chat-only guesses. Static doctor/lint + Vitest on every
 ## Ownership
 
 - `run.py` — live RPC evals; `--skip-rpc` is static-only
-- `ci_static.py` — doctor, frontmatter, size, product pack, Claude plugin layout, packaging scratch
-- `unit/` — Vitest helpers and tests
+- `ci_static.py` — doctor, frontmatter, size, product pack (incl. `empryo/poteto.md`), Claude plugin layout, packaging scratch
+- `unit/` — Vitest helpers and tests (incl. `unit/empryo-install.test.ts`)
 - `ci-shims/` — `node:fs` stub for `tsc` without `@types/node`
 
 ## Local Contracts
@@ -21,6 +21,8 @@ Prove the plugin without chat-only guesses. Static doctor/lint + Vitest on every
 - Do not keep a repo `.omp/skills` symlink. `static_install_docs` and `unit/product-capabilities.test.ts` assert filesystem absence, not only README text.
 - Claude components stay at plugin root. `.claude-plugin/` may hold `plugin.json` and `marketplace.json` only — not `skills/`.
 - Official skill vendor-sync tests (`unit/sync-skills.test.ts`) stay offline (`--from` fixture). Do not clone `cursor/plugins` on CI.
+- Empryo install tests (`unit/empryo-install.test.ts`, Empryo cases in `unit/sync-skills.test.ts`) use a temp HOME only, never the real one. No `empryo` binary on CI; detection is injected.
+- `ci_static.py --product` checks `empryo/poteto.md` exists, has `name` + `description` frontmatter, and its `skills` list names `ps-poteto-mode`, which must exist under `skills/`.
 - Do not keep `.tmp-*` dirs or `e2e/_fm*-proof*` in the tree. Gitignore those names. `ci_static.py --quality` packaging asserts absence.
 
 ## Work Guidance
