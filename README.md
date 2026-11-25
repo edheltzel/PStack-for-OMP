@@ -68,7 +68,9 @@ Claude slash skills are namespaced: `/pstack:ps-how`, `/pstack:ps-poteto-mode`. 
 
 ### Empryo
 
-Empryo has no plugin API, so this one needs a clone.
+Empryo has no plugin API, so pstack installs from a clone. Needs Node and npm.
+
+#### Install
 
 ```
 git clone https://github.com/edheltzel/Do-Pstack.git
@@ -76,13 +78,49 @@ cd Do-Pstack
 npm run empryo -- install
 ```
 
-This links `skills/ps-*` into `~/.agents/skills`, writes the pstack agents and the `poteto` profile into `~/.empryo/agents/pstack/`, and records what it owns in `~/.empryo/pstack.json`. Check it with `npm run empryo -- check`.
+| What | Where |
+| --- | --- |
+| Skills `skills/ps-*` | symlinked into `~/.agents/skills/` |
+| 8 pstack agents, translated for Empryo | `~/.empryo/agents/pstack/` |
+| `poteto` profile | `~/.empryo/agents/pstack/poteto.md` |
+| Ownership manifest | `~/.empryo/pstack.json` |
 
-Sticky Poteto Mode is the `poteto` profile, picked per tab: `/agent poteto`, or `empryo --agent poteto`.
+Keep the clone where it is: the skills are symlinks into it. Install never overwrites a file it did not create; it reports it and leaves it alone. Preview first with `npm run empryo -- install --dry-run`.
 
-Update: `git pull` then `npm run empryo -- install`.
+#### Use
 
-Remove: `npm run empryo -- remove` (deletes only what the manifest lists).
+- Poteto Mode: pick the `poteto` profile per tab with `/agent poteto`, or start with `empryo --agent poteto`. Switch the tab to another agent to turn it off. It is never on for every tab.
+- Skills: run any `ps-*` skill from `/skills` or by name, in any tab.
+- Agents: `poteto-agent`, `how-explorer`, `interrogate-reviewer`, `swarm-worker` and the rest show in `/agents` and can be dispatched by name.
+
+#### Update the plugin
+
+```
+cd Do-Pstack
+git pull
+npm run empryo -- install
+```
+
+Install is safe to rerun: it links new skills, removes links to deleted ones, and refreshes the agents. `npm run empryo -- check` tells you when an update is needed; it exits non-zero if anything is missing, out of date, or blocked by a file pstack does not own.
+
+#### Update the pstack skills
+
+`git pull` gets the skills as synced in this repo. To pull the newest official skills from [cursor/plugins](https://github.com/cursor/plugins/tree/main/pstack) yourself:
+
+```
+npm run sync -- --dry-run
+npm run sync
+```
+
+Sync writes into `skills/ps-*`, then updates your Empryo install in the same run (only when `~/.empryo/pstack.json` exists). Pass `--no-empryo` to skip the Empryo step. See [Update official skills](#update-official-skills).
+
+#### Remove
+
+```
+npm run empryo -- remove
+```
+
+Deletes only what the manifest lists. Your own skills and agents stay.
 
 ## Usage
 
