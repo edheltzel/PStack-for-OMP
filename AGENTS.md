@@ -59,14 +59,13 @@ Closeout: re-check paths, update owning docs, refresh indexes, run verification,
 
 ## Version control
 
-GitButler (`but`) is the VCS. The main checkout is the `gitbutler/workspace` branch; target is `origin/master`.
+Plain git (or LazyGit / grit). No GitButler, no git hooks. Target is `origin/master`.
 
-- All writes go through `but` (`commit`, `push`, `pr new`, `move`, `squash`). Read-only git (`git log`, `git blame`) is fine.
-- One dedicated `but` branch per feature. Commit only that session's changes to it.
+- One branch per feature. Commit only that session's changes to it.
 - Commit small and often: after every working checkpoint, not at the end of the task. Split unrelated hunks into separate commits. Large commits hide what changed from the human in the loop.
-- Stack when a change clearly builds on an unmerged branch: `but move <child> --above <parent>`. Do not mix dependent work into one branch.
-- Prefer `but` branches in the workspace over git worktrees (GitButler does not commit from linked worktrees). If a worktree is needed for a new feature, suffix it `-wip`.
-- PRs only when asked. Use `but pr new <top-branch> -t`, never `gh pr create`. Write the PR body; when the branch is stacked, name the branches it depends on with a `Stacked on:` line so the reviewer can find them.
+- Stack when a change clearly builds on an unmerged branch: branch from the parent and target it in the PR. Do not mix dependent work into one branch.
+- Parallel or isolated work goes in a worktree at `.worktrees/<name>`, one branch per worktree; remove it after merge.
+- PRs only when asked, with `gh pr create`. Write the PR body; when the branch is stacked, name the branches it depends on with a `Stacked on:` line so the reviewer can find them.
 
 ## Native omp
 
