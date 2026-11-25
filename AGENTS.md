@@ -104,7 +104,7 @@ Empryo has no extension API. Tell operators checkout install:
 
 - From a checkout: `npm run empryo -- install`. Links `skills/ps-*` into `~/.agents/skills`, writes translated agents and the `poteto` profile into `~/.empryo/agents/pstack/`, records ownership in `~/.empryo/pstack.json`.
 - `npm run empryo -- check` reports missing or drifted entries. `npm run empryo -- remove` deletes only manifest entries.
-- Sticky poteto-mode is the `poteto` profile, picked per tab (`/agent poteto` or `empryo --agent poteto`). Never process-wide.
+- Sticky poteto-mode is the `poteto` profile, picked per tab (`/profile poteto` or `empryo --profile poteto`; off with `/profile off`). Never process-wide.
 - Update: `git pull` then `npm run empryo -- install`.
 - Contract and translation: [empryo/AGENTS.md](empryo/AGENTS.md).
 

@@ -87,11 +87,54 @@ npm run empryo -- install
 
 Keep the clone where it is: the skills are symlinks into it. Install never overwrites a file it did not create; it reports it and leaves it alone. Preview first with `npm run empryo -- install --dry-run`.
 
-#### Use
+#### Poteto Mode
 
-- Poteto Mode: pick the `poteto` profile per tab with `/agent poteto`, or start with `empryo --agent poteto`. Switch the tab to another agent to turn it off. It is never on for every tab.
-- Skills: run any `ps-*` skill from `/skills` or by name, in any tab.
-- Agents: `poteto-agent`, `how-explorer`, `interrogate-reviewer`, `swarm-worker` and the rest show in `/agents` and can be dispatched by name.
+Empryo has no `/poteto-mode` command. Poteto Mode is the `poteto` profile, and a profile belongs to one tab.
+
+| Do | How |
+| --- | --- |
+| Turn it on in a tab | `/profile poteto`, or `/profiles` and pick it, or the profile button in the desktop composer |
+| Start a window with it | `empryo --profile poteto` |
+| One headless run | `empryo --headless --profile poteto "fix the flaky login test"` |
+| Turn it off | `/profile off`, or click the **X** next to the profile name |
+| Make it every new tab's default | `/profile default poteto`; undo with `/profile default off` |
+
+`--agent` works anywhere `--profile` does.
+
+While it is on, the tab:
+
+1. Loads `ps-poteto-mode` in full and runs at high effort.
+2. Matches your request to a playbook (Investigation, Bug fix, Feature, Refactoring, Perf issue, Prototype, Babysit, Autonomous run, and more) and follows its steps.
+3. Opens the `ps-principle-*` skill for each principle it applies.
+4. Delegates with `dispatch` to the pstack agents, reviews their diffs itself, and checks real behavior before calling the work done.
+
+Turning it off restores the tab's model, routing and skills. Other tabs are never affected. A resumed session keeps the profile it was saved with.
+
+#### Skills
+
+Every `ps-*` skill is available in every tab, with or without Poteto Mode.
+
+| Do | How |
+| --- | --- |
+| Use one now | Name it in your message: "use ps-how: how does sync reconcile Empryo?" |
+| Keep one on for the tab | `/skills` (or `Ctrl+S` in the terminal), **Active** tab, turn it on |
+| Browse what is installed | `/skills`, **Installed** tab, search `ps-` |
+| Load one headless | `empryo --headless --skill ps-how "how does X work?"` |
+
+Good first picks: `ps-how` (how code works), `ps-why` (why it is that way), `ps-interrogate` (adversarial review), `ps-swarm` and `ps-arena` (parallel workers), `ps-tdd`, `ps-unslop` (cut AI tells from writing). `ps-poteto-help` explains the rest and helps you pick.
+
+#### Agents
+
+The pstack agents appear in `/agents`. The agent dispatches them for you when their description fits; you can also ask by name ("have how-explorer map the sync code").
+
+| Agent | Used by |
+| --- | --- |
+| `poteto-agent` | Poteto Mode work |
+| `how-explorer`, `how-explainer` | `ps-how` |
+| `interrogate-reviewer` | `ps-interrogate` |
+| `swarm-worker` | `ps-swarm` |
+| `arena-runner`, `arena-judge` | `ps-arena` |
+| `comment-sicko` | `ps-no-comments` |
 
 #### Update the plugin
 
