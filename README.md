@@ -9,7 +9,7 @@
 
 # PStack for Oh-My-Pi 
 
-This is a native plugin for Oh-My-Pi (omp) but has support for Pi and Claude Code.
+This is a native plugin for Oh-My-Pi (omp) but has support for Pi, Claude Code and Empryo.
 
 All skills follow the `ps-*` namespace, You might hate it 😬, but for me it's a quick visual and typing action to quickly find the skill I want to run manually. Which is similar to my [DoSkills](https://github.com/edheltzel/Do-Skills).
 
@@ -66,6 +66,24 @@ This session only: `claude --plugin-dir ./`
 
 Claude slash skills are namespaced: `/pstack:ps-how`, `/pstack:ps-poteto-mode`. Validate the layout with `claude plugin validate .`. Sticky `/poteto-mode` is omp-only; on Claude run `/pstack:ps-poteto-mode`.
 
+### Empryo
+
+Empryo has no plugin API, so this one needs a clone.
+
+```
+git clone https://github.com/edheltzel/Do-Pstack.git
+cd Do-Pstack
+npm run empryo -- install
+```
+
+This links `skills/ps-*` into `~/.agents/skills`, writes the pstack agents and the `poteto` profile into `~/.empryo/agents/pstack/`, and records what it owns in `~/.empryo/pstack.json`. Check it with `npm run empryo -- check`.
+
+Sticky Poteto Mode is the `poteto` profile, picked per tab: `/agent poteto`, or `empryo --agent poteto`.
+
+Update: `git pull` then `npm run empryo -- install`.
+
+Remove: `npm run empryo -- remove` (deletes only what the manifest lists).
+
 ## Usage
 
 1. On omp: `/poteto-mode` — enable sticky Poteto Mode for this conversation. Optional task arguments are passed through; this also sends `/skill:ps-poteto-mode`.
@@ -108,7 +126,7 @@ npm run sync
 Same command: `node scripts/pstack.mjs sync`.
 Dry-run: `npm run sync -- --dry-run`.
 
-That pulls `pstack/skills/<name>` from `cursor/plugins` into the existing `skills/ps-*` tree (YAML `name` gets the `ps-` prefix). It does not create a second skill tree or install into agent skill directories.
+That pulls `pstack/skills/<name>` from `cursor/plugins` into the existing `skills/ps-*` tree (YAML `name` gets the `ps-` prefix). It does not create a second skill tree. When Empryo was installed with `npm run empryo -- install` (manifest `~/.empryo/pstack.json`), sync then reconciles those Empryo links and agents; `--no-empryo` skips that.
 
 After a feature or this sync, bump versions the same way:
 

@@ -1,6 +1,6 @@
 # pstack
 
-omp + Claude Code plugin: one factory (`extensions/pstack.ts`), Claude manifest (`.claude-plugin/plugin.json`), skills, agents.
+omp + Pi + Claude Code + Empryo: one factory (`extensions/pstack.ts`), Claude manifest (`.claude-plugin/plugin.json`), skills, agents.
 
 ## Codegraph
 
@@ -52,8 +52,9 @@ Closeout: re-check paths, update owning docs, refresh indexes, run verification,
 
 - Static gate (CI and local): `python3 e2e/run.py --skip-rpc` and `npm test` (Vitest).
 - No `omp`, no `omp --mode rpc`, no TUI, no `claude` on GitHub runners. Live RPC is local only: `python3 e2e/run.py` without `--skip-rpc`. Host-only prove (`omp plugin doctor`, `claude plugin validate`) is documented in e2e/AGENTS.md.
-- One factory. Poteto-mode is per-session, never a process-wide boolean.
+- One factory. Poteto-mode is per-session (omp) or the per-tab `poteto` profile (Empryo), never a process-wide boolean.
 - Official skills SoT is `cursor/plugins` `pstack/skills`. Update with `npm run sync` (`node scripts/pstack.mjs sync`). Writes into existing `skills/ps-*` only. Not `backnotprop/pstack`, not skills.sh, not `npx skills add`.
+- `npm run sync` also reconciles an installed Empryo, only when `~/.empryo/pstack.json` exists. `--no-empryo` skips it.
 - Skill prefix is `ps-`, the product namespace. omp lists skills flat, so a prefix is required; never rename it to match a personal skill set (it went `ps-` → `do-` → `ps-` once already).
 - After shipping a feature or official-skills sync, bump with `npm run bump -- patch` (or `minor` / `major`). Writes `package.json` (omp + pi) and `.claude-plugin/plugin.json`. Commit that, then `npm run bump -- --tag` and `npm run bump -- --release` so the tag hits the committed sha (`gh release create --target`). Do not pass patch and --tag in one command (that would bump twice or tag the old HEAD).
 
@@ -97,6 +98,16 @@ Tell operators plugin-first only:
 - Validate on a host with Claude Code: `claude plugin validate .`
 - Sticky `/poteto-mode` is omp factory only. Claude uses `/pstack:ps-poteto-mode`.
 
+## Native Empryo
+
+Empryo has no extension API. Tell operators checkout install:
+
+- From a checkout: `npm run empryo -- install`. Links `skills/ps-*` into `~/.agents/skills`, writes translated agents and the `poteto` profile into `~/.empryo/agents/pstack/`, records ownership in `~/.empryo/pstack.json`.
+- `npm run empryo -- check` reports missing or drifted entries. `npm run empryo -- remove` deletes only manifest entries.
+- Sticky poteto-mode is the `poteto` profile, picked per tab (`/agent poteto` or `empryo --agent poteto`). Never process-wide.
+- Update: `git pull` then `npm run empryo -- install`.
+- Contract and translation: [empryo/AGENTS.md](empryo/AGENTS.md).
+
 ## Verification
 
 ```bash
@@ -113,7 +124,8 @@ npm test
 | [skills/AGENTS.md](skills/AGENTS.md)           | Skill tree; SKILL.md frontmatter `name` + `description`                                         |
 | [docs/AGENTS.md](docs/AGENTS.md)               | original numbered `guide/` as an omp walkthrough; first-run lives on README (omp marketplace, pi git install, Claude plugin install) |
 | [automations/AGENTS.md](automations/AGENTS.md) | Dormant Benny pack; not slash skills                                                            |
-| [scripts/AGENTS.md](scripts/AGENTS.md)         | `pstack sync` + `pstack bump` (package.json + Claude plugin version)                            |
+| [scripts/AGENTS.md](scripts/AGENTS.md)         | `pstack sync` + `pstack bump` (package.json + Claude plugin version) + `pstack empryo`          |
+| [empryo/AGENTS.md](empryo/AGENTS.md)           | `poteto` profile; Empryo install contract and agent frontmatter translation                     |
 
 `agents/` and `commands/` have no child AGENTS.md; they follow this rail. Commands need frontmatter `description`.
 

@@ -1,0 +1,1 @@
+x 2026-11-25 2026-11-25 Native Empryo support: pstack empryo install/check/remove, poteto profile, sync reconciles Empryo +pstackforpi report:empryo/AGENTS.md
